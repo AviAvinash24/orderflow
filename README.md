@@ -12,7 +12,7 @@ Any e-commerce backend has to solve three hard problems at the same time:
 
 1. **Inventory correctness under concurrent load** — when hundreds of customers try to buy the same limited-stock item at once, the system must never oversell.
 2. **Payment safety under unreliable networks** — payment webhooks can arrive twice, arrive late, or arrive out of order. Each payment must be processed exactly once, no matter how many times the notification is sent.
-3. **Reliable, non-blocking side effects** — sending confirmations, updating inventory ledgers, and triggering notifications should never slow down checkout, and should never be lost if a background worker crashes mid-task.
+3. **Reliable, non-blocking side effects** — sending confirmations, updating inventory ledgers, and triggering notifications should never slow down checkout, and should never be lost if a background worker crashes mid-task....
 
 OrderFlow is built specifically to solve these three problems, not just to build another CRUD app.
 
