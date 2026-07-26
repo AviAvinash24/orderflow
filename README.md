@@ -35,7 +35,7 @@ placed → paid → packed → shipped → delivered
 
 ### Solving Overselling
 
-Inventory is tracked with two separate counters instead of one:
+Inventory is tracked with two separate counters instead of one: we divided that into two coloums.
 
 ```
 quantity_available   quantity_reserved
