@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from app.core.db import close_db, connect_db
 from app.core.deps import CurrentUser, get_current_user
 from app.routers.auth import router as auth_router
+from app.routers.products import router as products_router
 
 
 @asynccontextmanager
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Orderflow", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(products_router)
 
 
 @app.get("/health")
