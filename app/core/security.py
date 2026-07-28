@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+from jwt.exceptions import InvalidTokenError
 
 from app.core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
 
@@ -25,4 +26,5 @@ def create_access_token(user_id: str, email: str) -> str:
 
 
 def decode_access_token(token: str) -> dict:
+    """Decode and validate JWT. Raises InvalidTokenError on failure."""
     return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
