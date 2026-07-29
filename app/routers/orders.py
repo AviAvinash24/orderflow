@@ -22,36 +22,47 @@ async def create_order(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            product = await conn.fetchrow(
-                "SELECT id, price FROM products WHERE id = $1::uuid",
-                body.product_id,
-            )
-            if product is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Product not found",
-                )
+            reserved_items: list[OrderItemResponse] = []
+            total_amount = Decimal("0")
 
-            reserved = await conn.fetchrow(
-                """
-                UPDATE inventory
-                SET quantity_available = quantity_available - $2,
-                    quantity_reserved = quantity_reserved + $2
-                WHERE product_id = $1::uuid
-                  AND quantity_available >= $2
-                RETURNING product_id
-                """,
-                body.product_id,
-                body.quantity,
-            )
-            if reserved is None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Insufficient stock",
+            for item in body.items:
+                product = await conn.fetchrow(
+                    "SELECT id, price FROM products WHERE id = $1::uuid",
+                    item.product_id,
                 )
+                if product is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Product not found: {item.product_id}",
+                    )
 
-            unit_price = Decimal(str(product["price"]))
-            total_amount = unit_price * body.quantity
+                reserved = await conn.fetchrow(
+                    """
+                    UPDATE inventory
+                    SET quantity_available = quantity_available - $2,
+                        quantity_reserved = quantity_reserved + $2
+                    WHERE product_id = $1::uuid
+                      AND quantity_available >= $2
+                    RETURNING product_id
+                    """,
+                    item.product_id,
+                    item.quantity,
+                )
+                if reserved is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Insufficient stock for product: {item.product_id}",
+                    )
+
+                unit_price = Decimal(str(product["price"]))
+                total_amount += unit_price * item.quantity
+                reserved_items.append(
+                    OrderItemResponse(
+                        product_id=item.product_id,
+                        quantity=item.quantity,
+                        unit_price_at_purchase=unit_price,
+                    )
+                )
 
             order = await conn.fetchrow(
                 """
@@ -64,29 +75,24 @@ async def create_order(
                 expires_at,
             )
 
-            await conn.execute(
-                """
-                INSERT INTO order_items (
-                    order_id, product_id, quantity, unit_price_at_purchase
+            for line in reserved_items:
+                await conn.execute(
+                    """
+                    INSERT INTO order_items (
+                        order_id, product_id, quantity, unit_price_at_purchase
+                    )
+                    VALUES ($1, $2::uuid, $3, $4)
+                    """,
+                    order["id"],
+                    line.product_id,
+                    line.quantity,
+                    line.unit_price_at_purchase,
                 )
-                VALUES ($1, $2::uuid, $3, $4)
-                """,
-                order["id"],
-                body.product_id,
-                body.quantity,
-                unit_price,
-            )
 
     return OrderResponse(
         id=str(order["id"]),
         status=order["status"],
         total_amount=order["total_amount"],
         expires_at=order["expires_at"],
-        items=[
-            OrderItemResponse(
-                product_id=body.product_id,
-                quantity=body.quantity,
-                unit_price_at_purchase=unit_price,
-            )
-        ],
+        items=reserved_items,
     )

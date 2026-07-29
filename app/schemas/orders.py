@@ -4,9 +4,13 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
-class CreateOrderRequest(BaseModel):
+class OrderItemCreate(BaseModel):
     product_id: str
     quantity: int = Field(gt=0)
+
+
+class CreateOrderRequest(BaseModel):
+    items: list[OrderItemCreate] = Field(min_length=1)
 
 
 class OrderItemResponse(BaseModel):
