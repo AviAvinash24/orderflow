@@ -14,3 +14,9 @@ DATABASE_URL = (
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
+
+# How long a placed order holds stock before auto-expire
+RESERVATION_MINUTES = int(os.environ.get("RESERVATION_MINUTES", "10"))
+
+# How often the background job scans for expired reservations
+EXPIRY_JOB_INTERVAL_SECONDS = int(os.environ.get("EXPIRY_JOB_INTERVAL_SECONDS", "30"))

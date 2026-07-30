@@ -9,7 +9,7 @@ from app.schemas.orders import CreateOrderRequest, OrderItemResponse, OrderRespo
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
-RESERVATION_MINUTES = 10
+from app.core.config import RESERVATION_MINUTES
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)

@@ -1,19 +1,27 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
 from app.core.db import close_db, connect_db
 from app.core.deps import CurrentUser, get_current_user
+from app.jobs.expire_reservations import expiry_loop
 from app.routers.auth import router as auth_router
-from app.routers.products import router as products_router
 from app.routers.orders import router as orders_router
+from app.routers.products import router as products_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
-    yield
-    await close_db()
+    stop = asyncio.Event()
+    task = asyncio.create_task(expiry_loop(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
+        await close_db()
 
 
 app = FastAPI(title="Orderflow", lifespan=lifespan)
