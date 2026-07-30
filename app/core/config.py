@@ -20,3 +20,8 @@ RESERVATION_MINUTES = int(os.environ.get("RESERVATION_MINUTES", "10"))
 
 # How often the background job scans for expired reservations
 EXPIRY_JOB_INTERVAL_SECONDS = int(os.environ.get("EXPIRY_JOB_INTERVAL_SECONDS", "30"))
+
+# RQ / outbox worker
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+OUTBOX_POLL_SECONDS = int(os.environ.get("OUTBOX_POLL_SECONDS", "5"))
+OUTBOX_BATCH_SIZE = int(os.environ.get("OUTBOX_BATCH_SIZE", "100"))
