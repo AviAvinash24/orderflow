@@ -20,12 +20,16 @@ async def create_order(
     pool = get_pool()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESERVATION_MINUTES)
 
+    # Deterministic lock order: same product row order for every concurrent order
+    # → avoids A locks Mouse→Keyboard while B locks Keyboard→Mouse (deadlock).
+    items = sorted(body.items, key=lambda i: i.product_id)
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             reserved_items: list[OrderItemResponse] = []
             total_amount = Decimal("0")
 
-            for item in body.items:
+            for item in items:
                 product = await conn.fetchrow(
                     "SELECT id, price FROM products WHERE id = $1::uuid",
                     item.product_id,
@@ -36,6 +40,8 @@ async def create_order(
                         detail=f"Product not found: {item.product_id}",
                     )
 
+                # Atomic check-and-decrement: only one concurrent UPDATE wins
+                # the last unit. Losers get 0 rows → 409. Never goes negative.
                 reserved = await conn.fetchrow(
                     """
                     UPDATE inventory
@@ -43,7 +49,7 @@ async def create_order(
                         quantity_reserved = quantity_reserved + $2
                     WHERE product_id = $1::uuid
                       AND quantity_available >= $2
-                    RETURNING product_id
+                    RETURNING product_id, quantity_available, quantity_reserved
                     """,
                     item.product_id,
                     item.quantity,
