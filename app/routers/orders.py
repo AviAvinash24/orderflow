@@ -1,21 +1,18 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-
 from fastapi import APIRouter, Depends, HTTPException, status
-
 from app.core.config import RESERVATION_MINUTES
 from app.core.db import get_pool
 from app.core.deps import CurrentUser, get_current_user
+from app.core.rate_limit import enforce_order_rate_limit
 from app.schemas.orders import CreateOrderRequest, OrderItemResponse, OrderResponse
-
 router = APIRouter(prefix="/orders", tags=["orders"])
-
-
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     body: CreateOrderRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    await enforce_order_rate_limit(current_user.id)
     pool = get_pool()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESERVATION_MINUTES)
 

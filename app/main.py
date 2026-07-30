@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 
 from app.core.db import close_db, connect_db
 from app.core.deps import CurrentUser, get_current_user
+from app.core.rate_limit import close_redis, connect_redis
 from app.jobs.expire_reservations import expiry_loop
 from app.routers.auth import router as auth_router
 from app.routers.orders import router as orders_router
@@ -15,6 +16,7 @@ from app.routers.webhooks import router as webhooks_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
+    await connect_redis()
     stop = asyncio.Event()
     task = asyncio.create_task(expiry_loop(stop))
     try:
@@ -22,6 +24,7 @@ async def lifespan(app: FastAPI):
     finally:
         stop.set()
         await task
+        await close_redis()
         await close_db()
 
 
