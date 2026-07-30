@@ -15,8 +15,8 @@ async def run_migrations():
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
         database=os.environ["POSTGRES_DB"],
-        host="localhost",
-        port=5432,
+        host=os.environ.get("POSTGRES_HOST", "localhost"),
+        port=int(os.environ.get("POSTGRES_PORT", "5432")),
     )
 
     await conn.execute("""
