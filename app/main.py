@@ -9,6 +9,7 @@ from app.jobs.expire_reservations import expiry_loop
 from app.routers.auth import router as auth_router
 from app.routers.orders import router as orders_router
 from app.routers.products import router as products_router
+from app.routers.webhooks import router as webhooks_router
 
 
 @asynccontextmanager
@@ -28,7 +29,7 @@ app = FastAPI(title="Orderflow", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(products_router)
 app.include_router(orders_router)
-
+app.include_router(webhooks_router)
 
 @app.get("/health")
 def health_check():
