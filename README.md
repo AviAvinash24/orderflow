@@ -1,13 +1,13 @@
 # OrderFlow
 
-Concurrency-safe e-commerce **order fulfillment backend** (portfolio demo).
+Concurrency-safe order fulfillment backend (portfolio demo).
 
-Not a storefront and not a real payment processor. It models the hard path: reserve stock, take payment under unreliable webhooks, fulfill the order, and release inventory correctly when things fail.
+Models the hard path of e-commerce checkout: reserve inventory under contention, apply payment webhooks idempotently, release stock on cancel or expiry, and publish side effects through a transactional outbox.
 
-Focus:
+**Focus areas**
 
-1. **Inventory correctness under concurrency** — never oversell
-2. **Payment safety under unreliable webhooks** — exactly-once application of gateway events
+1. **Inventory correctness** — never oversell under concurrent place-order requests
+2. **Payment safety** — exactly-once application of gateway webhook events
 3. **Reliable side effects** — transactional outbox so workers can crash without losing events
 
 ---
@@ -15,50 +15,27 @@ Focus:
 ## Order lifecycle
 
 ```
-placed ──payment succeeded──► paid ──► packed ──► shipped ──► delivered
-   │                              │
+placed ──payment succeeded──► paid
+   │                           │
    ├──reservation expiry──► expired
-   └──user cancel─────────► cancelled
-                                  ▲
-                            paid orders can also cancel
-                            (refund is stubbed / not a real PSP refund)
+   └──cancel──────────────► cancelled
+                           ▲
+                     paid orders can also cancel
 ```
 
 | Status | Meaning |
 |---|---|
 | `placed` | Order created; stock held in `quantity_reserved`; unpaid reservation has `expires_at` |
-| `paid` | Payment webhook applied; order ready for fulfillment |
-| `packed` | Warehouse packed the order; reserved stock is consumed (sold) |
-| `shipped` | Order left the warehouse |
-| `delivered` | Order reached the customer — terminal success |
+| `paid` | Payment webhook applied |
 | `expired` | Unpaid reservation timed out; stock returned to available |
 | `cancelled` | User cancelled while `placed` or `paid`; stock returned to available |
 
-### What is implemented today
-
-| Transition | Status | How |
-|---|---|---|
-| → `placed` | Done | `POST /orders` reserves stock |
-| `placed` → `paid` | Done | `POST /webhooks/payment` (`succeeded`) |
-| `placed` → `expired` | Done | Background expiry job |
-| `placed` → `cancelled` | Done | `POST /orders/{id}/cancel` |
-| `paid` → `cancelled` | Done | Same cancel endpoint (no real refund yet) |
-| `paid` → `packed` | Schema only | Enum exists; API not exposed yet |
-| `packed` → `shipped` | Schema only | Enum exists; API not exposed yet |
-| `shipped` → `delivered` | Schema only | Enum exists; API not exposed yet |
-
-Schema source of truth: `migrations/0005_create_orders.sql`.
-
-### Inventory rules across the flow
+### Inventory rules
 
 | Event | Inventory effect |
 |---|---|
 | Place order | `available -= qty`, `reserved += qty` |
 | Expire / cancel (`placed` or `paid`) | `reserved -= qty`, `available += qty` |
-| Pack (`paid` → `packed`, planned) | `reserved -= qty` (stock leaves the system as sold) |
-| Ship / deliver | Status only — no further stock math |
-
-Cancel is blocked once an order reaches `packed` or later (`409`).
 
 ---
 
@@ -88,10 +65,10 @@ curl http://localhost:8000/health
 API: `http://localhost:8000` · Docs: `http://localhost:8000/docs`
 
 ```bash
-# Auth unit tests (ASGI)
+# Auth unit tests
 pytest app/tests/test_auth_deps.py
 
-# Failure-case tests need docker compose up
+# Failure-case tests (requires docker compose up)
 pytest app/tests/test_failure_cases.py
 ```
 
@@ -120,7 +97,7 @@ Worker (RQ) ◄── Redis broker
 
 ---
 
-## Happy path (place → pay → fulfill)
+## Core flows
 
 ### 1. Place order → `placed`
 
@@ -135,7 +112,7 @@ POST /orders (JWT)
   → COMMIT → 201
 ```
 
-Insufficient stock → `409`, whole TX rolls back.
+Insufficient stock → `409`, whole transaction rolls back.
 
 **Code:** `create_order` in `app/routers/orders.py`
 
@@ -153,26 +130,11 @@ POST /webhooks/payment
 ```
 
 Duplicate `gateway_event_id` → ignored (idempotent).  
-Late success after non-`placed` → payment recorded, status unchanged.
+Late success after a non-`placed` status → payment recorded, order status unchanged.
 
 **Code:** `app/routers/webhooks.py`
 
-### 3. Fulfillment → `packed` → `shipped` → `delivered` (planned APIs)
-
-```
-POST /orders/{id}/pack      # paid → packed; consume reserved stock
-POST /orders/{id}/ship      # packed → shipped
-POST /orders/{id}/deliver   # shipped → delivered
-```
-
-Each step: `FOR UPDATE` + conditional status UPDATE + outbox event in the same TX.  
-Illegal transition → `409`.
-
----
-
-## Side paths
-
-### Unpaid reservation expiry → `expired`
+### 3. Unpaid reservation expiry → `expired`
 
 ```
 API lifespan expiry loop (every EXPIRY_JOB_INTERVAL_SECONDS)
@@ -181,11 +143,11 @@ API lifespan expiry loop (every EXPIRY_JOB_INTERVAL_SECONDS)
   → release reserved → available
 ```
 
-Only unpaid `placed` orders expire. Paid/packed+ are never touched.
+Only unpaid `placed` orders expire.
 
 **Code:** `app/jobs/expire_reservations.py`
 
-### Cancel → `cancelled`
+### 4. Cancel → `cancelled`
 
 ```
 POST /orders/{id}/cancel
@@ -195,18 +157,16 @@ POST /orders/{id}/cancel
   → release reserved → available
 ```
 
-Cancel after `paid` is allowed; a real gateway refund is **not** implemented (future: refund stub / outbox `order.refund_requested`).
-
 **Code:** `cancel_order` in `app/routers/orders.py`
 
-### Outbox → worker
+### 5. Outbox → worker
 
 ```
 Worker
   → poll / enqueue when queue empty
   → process_outbox_batch
       → SELECT pending FOR UPDATE SKIP LOCKED
-      → handle (log stub today)
+      → handle event
       → mark processed
 ```
 
@@ -224,7 +184,7 @@ Worker
 | Payment webhooks | `/webhooks` | `app/routers/webhooks.py` |
 | Health / me | `/health`, `/me` | `app/main.py` |
 
-Webhooks are unauthenticated (simulated gateway).
+Webhooks are unauthenticated (simulated payment gateway).
 
 ---
 
@@ -242,7 +202,7 @@ Webhooks are unauthenticated (simulated gateway).
 | Tests | pytest + pytest-asyncio + httpx |
 | Containers | Docker Compose |
 
-Deliberate absences: no ORM, no Celery, no `services/` / `models/` packages — business logic lives in routers + jobs with explicit SQL transactions.
+Business logic lives in routers and jobs with explicit SQL transactions — no ORM, no Celery, no separate `services/` / `models/` packages.
 
 ---
 
@@ -283,13 +243,12 @@ users 1──* orders 1──* order_items *──1 products 1──1 inventory
 | `users` | `email` UNIQUE, `password_hash` | `0002_*` |
 | `products` | `sku` UNIQUE, `price >= 0` | `0003_*` |
 | `inventory` | `quantity_available`, `quantity_reserved` (≥ 0) | `0004_*` |
-| `orders` | `order_status`, `expires_at`, `total_amount` | `0005_*` |
+| `orders` | `status`, `expires_at`, `total_amount` | `0005_*` |
 | `order_items` | price snapshot, `quantity > 0` | `0006_*` |
 | `payment_events` | `gateway_event_id` UNIQUE | `0007_*` |
 | `outbox_events` | `event_type`, JSONB payload, status | `0008_*` |
 
-**Statuses:** `placed | paid | packed | shipped | delivered | cancelled | expired`  
-**Seed catalog:** `0009_seed_products.sql` (tests use mouse `11111111-…`).
+Seed catalog: `0009_seed_products.sql` (tests use mouse `11111111-…`).
 
 ---
 
@@ -318,24 +277,25 @@ users 1──* orders 1──* order_items *──1 products 1──1 inventory
 | Unknown product | `404` |
 | Insufficient stock | `409`; TX abort |
 | Concurrent last unit | One `201`, one `409` |
-| Cancel after `packed`+ | `409` |
 | Concurrent cancel | One wins via `FOR UPDATE` |
 | Duplicate payment webhook | `200`; second insert ignored |
 | Unknown order webhook | `200` + warning log |
 | Failed payment event | Recorded; order stays `placed` |
 | Rate limit exceeded | `429` + `Retry-After` |
 
-### Tests (`app/tests/test_failure_cases.py`)
+### Tests
 
-1. **Double webhook** — same `gateway_event_id` → one `paid`, one payment row, one `order.paid` outbox event  
-2. **Concurrent last unit** — stock=1, two buyers → `[201, 409]`, inventory correct  
-3. **Expiry** — stale `placed` → `expired`, reserved stock released  
+`app/tests/test_failure_cases.py`
+
+1. **Double webhook** — same `gateway_event_id` → one `paid`, one payment row, one `order.paid` outbox event
+2. **Concurrent last unit** — stock=1, two buyers → `[201, 409]`, inventory correct
+3. **Expiry** — stale `placed` → `expired`, reserved stock released
 
 Auth edge cases: `app/tests/test_auth_deps.py`.
 
 ---
 
-## Infrastructure & config
+## Configuration
 
 | Service | Role |
 |---|---|
@@ -346,32 +306,13 @@ Auth edge cases: `app/tests/test_auth_deps.py`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `POSTGRES_*` | required | DB |
+| `POSTGRES_*` | required | DB connection |
 | `JWT_SECRET` | required | Token signing |
 | `JWT_EXPIRE_MINUTES` | 60 | Token TTL |
 | `RESERVATION_MINUTES` | 10 | Unpaid hold duration |
-| `EXPIRY_JOB_INTERVAL_SECONDS` | 30 | Expiry poll |
+| `EXPIRY_JOB_INTERVAL_SECONDS` | 30 | Expiry poll interval |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis |
 | `OUTBOX_POLL_SECONDS` | 5 | Worker enqueue interval |
 | `OUTBOX_BATCH_SIZE` | 100 | Drain batch size |
-| `ORDER_RATE_LIMIT` | 5 | Max place-order / window |
+| `ORDER_RATE_LIMIT` | 5 | Max place-order requests / window |
 | `ORDER_RATE_WINDOW_SECONDS` | 60 | Rate-limit window |
-
----
-
-## Roadmap (to finish place → delivered)
-
-1. Fulfillment endpoints: pack / ship / deliver with strict status gates  
-2. Consume reserved stock on `paid` → `packed`  
-3. Outbox events for packed / shipped / delivered / cancelled  
-4. Refund stub on cancel-after-paid (table or outbox only — no real PSP)  
-5. Tests for illegal transitions and pack-vs-cancel races  
-
-### Known gaps
-
-- No `packed` / `shipped` / `delivered` APIs yet (enum only)
-- Outbox handler is a log stub
-- No outbox dead-letter / `failed` status
-- Webhook has no signature verification (simulated gateway)
-- Cancel after `paid` does not issue a real refund
-- `.env` is required locally and not committed
