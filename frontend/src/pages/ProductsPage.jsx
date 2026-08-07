@@ -4,9 +4,9 @@ import { api, formatError } from '../api'
 import { useCart } from '../cart'
 
 function money(value) {
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat('en-IN', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'INR',
   }).format(Number(value))
 }
 
