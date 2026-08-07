@@ -1,7 +1,9 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.db import close_db, connect_db
 from app.core.deps import CurrentUser, get_current_user
@@ -29,6 +31,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Orderflow", lifespan=lifespan)
+
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
 app.include_router(products_router)
 app.include_router(orders_router)
