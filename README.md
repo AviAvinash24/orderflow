@@ -1,8 +1,10 @@
 # OrderFlow
 
-Concurrency-safe order fulfillment backend (portfolio demo).
+Concurrency-safe order fulfillment system (portfolio demo).
 
 Models the hard path of e-commerce checkout: reserve inventory under contention, apply payment webhooks idempotently, release stock on cancel or expiry, and publish side effects through a transactional outbox.
+
+**Live demo:** [https://orderflow-ui-f740.up.railway.app/](https://orderflow-ui-f740.up.railway.app/)
 
 **Focus areas**
 
